@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import DesignPreview from "./DesignPreview";
+import Keychain3D from "./Keychain3D";
 import { SHAPE_MAP } from "@/lib/shapes";
 import { SIZE_INFO, formatMoney } from "@/lib/pricing";
-import { normalizeDesign } from "@/lib/types";
-import type { KeychainDesign } from "@/lib/types";
+import { PAYMENT_LABELS, normalizeDesign } from "@/lib/types";
+import type { KeychainDesign, PaymentMethod } from "@/lib/types";
 
 const TOKEN_STORAGE_KEY = "mp_llaveros_owner_token_v2";
 const STATUSES = ["pendiente", "en producción", "listo", "entregado"] as const;
@@ -61,28 +62,20 @@ function writeStoredToken(token: string): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
-  } catch {
-    /* ignorar en iframes con almacenamiento restringido */
-  }
+  } catch {}
   try {
     window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-  } catch {
-    /* ignorar */
-  }
+  } catch {}
 }
 
 function clearStoredToken(): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-  } catch {
-    /* ignorar */
-  }
+  } catch {}
   try {
     window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-  } catch {
-    /* ignorar */
-  }
+  } catch {}
 }
 
 function buildAuthHeaders(token: string, extra?: Record<string, string>): Record<string, string> {
@@ -92,11 +85,9 @@ function buildAuthHeaders(token: string, extra?: Record<string, string>): Record
   }
   return headers;
 }
-
 export default function OrdersAdmin() {
   const [authState, setAuthState] = useState<"checking" | "locked" | "unlocked">("checking");
   const tokenRef = useRef<string>("");
-
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -106,11 +97,14 @@ export default function OrdersAdmin() {
   const [refreshing, setRefreshing] = useState(false);
   const [panelNotice, setPanelNotice] = useState("");
   const [filter, setFilter] = useState<string>("todos");
+  const [payFilter, setPayFilter] = useState<"todos" | PaymentMethod>("todos");
   const [query, setQuery] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
-  // Verificar al entrar si ya existe sesión activa de dueño (sin parpadeos ni cierres)
+  const [preview3DOrder, setPreview3DOrder] = useState<OrderRow | null>(null);
+  const [duoFocus3D, setDuoFocus3D] = useState<"both" | "first" | "second">("both");
+
   useEffect(() => {
     let alive = true;
     const stored = readStoredToken();
@@ -149,7 +143,6 @@ export default function OrdersAdmin() {
     };
   }, []);
 
-  // Recargar pedidos SIN cerrar jamás la sesión ante fallos temporales
   const refreshOrders = useCallback(async (silent = false) => {
     if (!silent) {
       setRefreshing(true);
@@ -182,7 +175,6 @@ export default function OrdersAdmin() {
     }
   }, []);
 
-  // Actualización silenciosa cada 15s para recibir nuevos pedidos en vivo (jamás cierra el panel)
   useEffect(() => {
     if (authState !== "unlocked") return;
     const timer = window.setInterval(() => {
@@ -248,9 +240,7 @@ export default function OrdersAdmin() {
         method: "POST",
         credentials: "include",
       });
-    } catch {
-      /* ignorar */
-    }
+    } catch {}
   }
 
   async function changeStatus(id: number, status: string) {
@@ -292,34 +282,26 @@ export default function OrdersAdmin() {
       setPanelNotice("No se pudo eliminar el pedido.");
     }
   }
-
-  /* -------------------------- Estado inicial breve -------------------------- */
   if (authState === "checking") {
     return (
       <section className="grid min-h-[calc(100dvh-56px)] place-items-center px-4 py-12">
         <div className="rounded-3xl border border-stone-200 bg-white px-8 py-7 text-center shadow-sm">
-          <p className="text-sm font-extrabold text-stone-700">Verificando acceso de dueños…</p>
+          <p className="text-sm font-extrabold text-stone-700">Verificando acceso de dueños...</p>
         </div>
       </section>
     );
   }
 
-  /* ------------------------ Pantalla de contraseña -------------------------- */
   if (authState === "locked") {
     return (
       <section className="grid min-h-[calc(100dvh-56px)] place-items-center bg-gradient-to-br from-amber-50 via-stone-50 to-orange-50/40 px-4 py-12">
         <div className="w-full max-w-md rounded-3xl border border-stone-200 bg-white p-7 shadow-xl sm:p-8">
           <div className="text-center">
-            <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-100 text-2xl shadow-inner">
-              🔐
-            </div>
-            <h1 className="mt-3 text-2xl font-black text-stone-900">Acceso para dueños</h1>
+            <h1 className="text-2xl font-black text-stone-900">Acceso para dueños</h1>
             <p className="mt-1.5 text-sm text-stone-500">
-              Apartado exclusivo de la empresa. Ingresa la contraseña para ver quién está pidiendo
-              llaveros, sus diseños, fotos y mensajes.
+              Ingresa la contraseña para ver quién está pidiendo llaveros, sus diseños en 3D, pagos y mensajes.
             </p>
           </div>
-
           <form onSubmit={handleLogin} className="mt-6 space-y-3.5" noValidate>
             <div className="relative">
               <input
@@ -346,31 +328,22 @@ export default function OrdersAdmin() {
                 {showPassword ? "Ocultar" : "Ver"}
               </button>
             </div>
-
             {loginError && (
-              <p
-                role="alert"
-                className="rounded-xl border border-red-200 bg-red-50 p-3 text-center text-xs font-bold text-red-700"
-              >
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-center text-xs font-bold text-red-700">
                 {loginError}
               </p>
             )}
-
             <button
               type="submit"
               disabled={verifying}
               className="w-full rounded-full bg-amber-500 px-5 py-3.5 text-base font-black text-white shadow-md transition hover:bg-amber-600 active:scale-[0.99] disabled:opacity-60"
             >
-              {verifying ? "Verificando contraseña…" : "Entrar al panel de pedidos"}
+              {verifying ? "Verificando contraseña..." : "Entrar al panel de pedidos"}
             </button>
           </form>
-
           <div className="mt-5 text-center">
-            <Link
-              href="/"
-              className="text-xs font-bold text-stone-500 underline-offset-4 hover:text-amber-700 hover:underline"
-            >
-              ← Volver al personalizador 3D
+            <Link href="/" className="text-xs font-bold text-stone-500 underline-offset-4 hover:text-amber-700 hover:underline">
+              Volver al personalizador 3D
             </Link>
           </div>
         </div>
@@ -378,45 +351,55 @@ export default function OrdersAdmin() {
     );
   }
 
-  /* --------------------- Panel privado de los dueños ------------------------ */
   const filtered = orders.filter((o) => {
+    const norm = normalizeDesign(o.design);
     const okStatus = filter === "todos" || o.status === filter;
+    const okPay = payFilter === "todos" || norm.paymentMethod === payFilter;
     const q = query.trim().toLowerCase();
+    const refText = (norm.paymentReference || "").toLowerCase();
     const okQuery =
       !q ||
       o.customerName.toLowerCase().includes(q) ||
       o.contact.toLowerCase().includes(q) ||
       o.message.toLowerCase().includes(q) ||
+      refText.includes(q) ||
       String(o.id).includes(q);
-    return okStatus && okQuery;
+    return okStatus && okPay && okQuery;
   });
 
   const totalRevenue = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0) / 100;
   const totalKeychains = orders.reduce((sum, o) => sum + (Number(o.quantity) || 1), 0);
   const pendingCount = orders.filter((o) => o.status === "pendiente").length;
 
+  const modalPrimary = preview3DOrder
+    ? normalizeDesign({
+        ...(preview3DOrder.design ?? {}),
+        image: preview3DOrder.design?.image || preview3DOrder.image || "",
+        drawing: preview3DOrder.design?.drawing || preview3DOrder.drawing || "",
+      })
+    : null;
+  const modalPartner = modalPrimary?.duoPartner ? normalizeDesign(modalPrimary.duoPartner) : null;
+
   return (
     <section className="mx-auto min-h-[calc(100dvh-56px)] w-full max-w-6xl px-4 py-6 sm:px-6">
-      {/* Encabezado */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
         <div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-0.5 text-[11px] font-black text-emerald-800">
-            ● Sesión de dueño activa
+            Sesión de dueño activa
           </span>
           <h1 className="mt-1 text-2xl font-black text-stone-900 sm:text-3xl">
-            Panel de Pedidos · Llaveros
+            Panel de Pedidos — Llaveros
           </h1>
           <p className="text-xs text-stone-500 sm:text-sm">
-            Aquí llegan todos los pedidos, mensajes, fotos, dibujos, mascotas y dúos. Se actualiza automáticamente.
+            Filtra depósitos por Banco Pichincha, Deuna o Débito y revisa cada pedido en 3D.
           </p>
         </div>
-
         <div className="flex flex-wrap items-center gap-2">
           <Link
             href="/"
             className="rounded-full border border-stone-300 bg-stone-50 px-4 py-2 text-xs font-bold text-stone-700 hover:border-amber-400"
           >
-            ← Personalizador
+            Personalizador
           </Link>
           <button
             type="button"
@@ -424,7 +407,7 @@ export default function OrdersAdmin() {
             onClick={() => void refreshOrders(false)}
             className="rounded-full border-2 border-amber-400 bg-amber-50 px-4 py-2 text-xs font-extrabold text-amber-900 transition hover:bg-amber-100 disabled:opacity-60"
           >
-            {refreshing ? "Actualizando…" : "🔄 Actualizar"}
+            {refreshing ? "Actualizando..." : "Actualizar"}
           </button>
           <button
             type="button"
@@ -442,7 +425,6 @@ export default function OrdersAdmin() {
         </div>
       )}
 
-      {/* Métricas rápidas */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
           <p className="text-[11px] font-bold uppercase tracking-wide text-stone-400">Pedidos</p>
@@ -453,9 +435,7 @@ export default function OrdersAdmin() {
           <p className="mt-1 text-2xl font-black text-amber-600 sm:text-3xl">{pendingCount}</p>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-stone-400">
-            Llaveros pedidos
-          </p>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-stone-400">Llaveros pedidos</p>
           <p className="mt-1 text-2xl font-black text-sky-700 sm:text-3xl">{totalKeychains}</p>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
@@ -466,40 +446,66 @@ export default function OrdersAdmin() {
         </div>
       </div>
 
-      {/* Buscador y filtros */}
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="mt-5 space-y-2.5">
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por nombre del cliente, teléfono, mensaje o # de pedido..."
-          className="min-w-[220px] flex-1 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-amber-500"
+          placeholder="Buscar por # comprobante de depósito, nombre del cliente, teléfono o # de pedido..."
+          className="w-full rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-amber-500"
         />
-        <div className="flex flex-wrap gap-1.5">
-          {["todos", ...STATUSES].map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setFilter(s)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-extrabold capitalize transition ${
-                filter === s
-                  ? "border-stone-900 bg-stone-900 text-white"
-                  : "border-stone-200 bg-white text-stone-600 hover:border-amber-400"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-extrabold uppercase text-stone-400">Pago:</span>
+            {(
+              [
+                ["todos", "Todos"],
+                ["pichincha", "Banco Pichincha"],
+                ["deuna", "Deuna"],
+                ["debito", "Débito"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setPayFilter(id)}
+                className={`rounded-full border px-3 py-1 text-xs font-extrabold transition ${
+                  payFilter === id
+                    ? "border-emerald-700 bg-emerald-700 text-white"
+                    : "border-stone-200 bg-white text-stone-600 hover:border-emerald-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-extrabold uppercase text-stone-400">Estado:</span>
+            {["todos", ...STATUSES].map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setFilter(s)}
+                className={`rounded-full border px-3 py-1 text-xs font-extrabold capitalize transition ${
+                  filter === s
+                    ? "border-stone-900 bg-stone-900 text-white"
+                    : "border-stone-200 bg-white text-stone-600 hover:border-amber-400"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-
-      {/* Lista de pedidos */}
       {filtered.length === 0 ? (
         <div className="mt-6 rounded-3xl border border-stone-200 bg-white p-12 text-center shadow-sm">
           <p className="text-base font-bold text-stone-500">
             {orders.length === 0
               ? "Aún no han llegado pedidos. Cuando un cliente haga un pedido aparecerá aquí al instante."
-              : `No hay pedidos que coincidan con el filtro “${filter}”.`}
+              : "No hay pedidos que coincidan con los filtros seleccionados."}
           </p>
         </div>
       ) : (
@@ -520,6 +526,7 @@ export default function OrdersAdmin() {
                 ? "Solo Nombre recortado"
                 : SHAPE_MAP[partner.shapeId || "geo-placa-clasica"]?.name ?? "Placa clásica"
               : "";
+            const payLabel = d.paymentMethod ? PAYMENT_LABELS[d.paymentMethod] : "Depósito / Banco Pichincha";
 
             return (
               <article
@@ -531,29 +538,34 @@ export default function OrdersAdmin() {
                     partner ? "md:grid-cols-[240px_1fr]" : "sm:grid-cols-[155px_1fr]"
                   }`}
                 >
-                  {/* Miniatura(s) fiel(es) del diseño */}
-                  {partner ? (
-                    <div className="grid grid-cols-2 gap-2 self-start">
-                      <div>
+                  <div className="space-y-2 self-start">
+                    {partner ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <DesignPreview design={d} />
+                          <p className="mt-1 text-center text-[10px] font-bold text-stone-500">Llavero #1</p>
+                        </div>
+                        <div>
+                          <DesignPreview design={partner} />
+                          <p className="mt-1 text-center text-[10px] font-bold text-stone-500">Llavero #2</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-36 sm:w-full">
                         <DesignPreview design={d} />
-                        <p className="mt-1 text-center text-[10px] font-bold text-stone-500">
-                          Llavero #1
-                        </p>
                       </div>
-                      <div>
-                        <DesignPreview design={partner} />
-                        <p className="mt-1 text-center text-[10px] font-bold text-stone-500">
-                          Llavero #2
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="w-36 self-start sm:w-full">
-                      <DesignPreview design={d} />
-                    </div>
-                  )}
-
-                  {/* Detalles del cliente y del pedido */}
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDuoFocus3D("both");
+                        setPreview3DOrder(o);
+                      }}
+                      className="w-full rounded-xl bg-stone-900 px-3 py-2 text-xs font-black text-amber-300 shadow-sm transition hover:bg-stone-800 active:scale-[0.98]"
+                    >
+                      Ver en 3D
+                    </button>
+                  </div>
                   <div className="space-y-2.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-stone-900 px-3 py-1 text-xs font-black text-white">
@@ -566,17 +578,20 @@ export default function OrdersAdmin() {
                       >
                         {o.status}
                       </span>
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-extrabold text-emerald-900">
+                        {payLabel}
+                      </span>
                       {partner ? (
                         <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-extrabold text-rose-800">
-                          💞 Dúo: {d.duoName || "Personalizado"}
+                          Dúo: {d.duoName || "Personalizado"}
                         </span>
                       ) : d.orderKind === "mascota" && d.petDesignId ? (
                         <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-extrabold text-amber-900">
-                          🐾 {d.petDesignTitle || `Mascota #${d.petDesignId}`}
+                          {d.petDesignTitle || `Mascota #${d.petDesignId}`}
                         </span>
                       ) : (
                         <span className="rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-bold text-stone-700">
-                          {d.base === "nombre" ? "🔤 Nombre como llavero" : "🪵 Superficie grabada"}
+                          {d.base === "nombre" ? "Nombre como llavero" : "Superficie grabada"}
                         </span>
                       )}
                       <span className="ml-auto text-xs text-stone-400">
@@ -584,9 +599,8 @@ export default function OrdersAdmin() {
                       </span>
                     </div>
 
-                    {/* Datos de quién pide */}
                     <div className="rounded-2xl bg-stone-50 p-3">
-                      <p className="text-base font-black text-stone-900">👤 {o.customerName}</p>
+                      <p className="text-base font-black text-stone-900">{o.customerName}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-700 sm:text-sm">
                         <span>
                           <span className="font-bold">Contacto:</span> {o.contact}
@@ -600,7 +614,7 @@ export default function OrdersAdmin() {
                           }}
                           className="rounded-md border border-stone-300 bg-white px-2 py-0.5 text-[11px] font-bold text-stone-600 hover:border-amber-400"
                         >
-                          {copiedId === o.id ? "✓ Copiado" : "Copiar"}
+                          {copiedId === o.id ? "Copiado" : "Copiar"}
                         </button>
                         {o.address && (
                           <span>
@@ -608,9 +622,12 @@ export default function OrdersAdmin() {
                           </span>
                         )}
                       </div>
+                      {d.paymentReference && (
+                        <p className="mt-1.5 text-xs font-bold text-emerald-800">
+                          Comprobante / Referencia de depósito: {d.paymentReference}
+                        </p>
+                      )}
                     </div>
-
-                    {/* Especificaciones de fabricación */}
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-700">
                       <span>
                         <span className="font-bold">Cantidad:</span> {o.quantity}{" "}
@@ -626,11 +643,11 @@ export default function OrdersAdmin() {
                         </span>
                       )}
                       <span>
-                        <span className="font-bold">Texto:</span> “{d.text || "—"}” ({d.font})
+                        <span className="font-bold">Texto:</span> {d.text || "—"} ({d.font})
                       </span>
                       {d.backText && (
                         <span>
-                          <span className="font-bold">Atrás:</span> “{d.backText}”
+                          <span className="font-bold">Atrás:</span> {d.backText}
                         </span>
                       )}
                       <span>
@@ -651,19 +668,16 @@ export default function OrdersAdmin() {
                     {partner && (
                       <div className="rounded-xl border border-rose-100 bg-rose-50/50 px-3 py-2 text-xs text-stone-700">
                         <span className="font-bold text-rose-800">Llavero #2 del Dúo:</span>{" "}
-                        {partnerShapeName} · Texto: “{partner.text || "—"}” ({partner.font}) ·
-                        Tamaño {SIZE_INFO[partner.size]?.cm ?? 7} cm
+                        {partnerShapeName} · Texto: {partner.text || "—"} ({partner.font}) · Tamaño{" "}
+                        {SIZE_INFO[partner.size]?.cm ?? 7} cm
                       </div>
                     )}
 
-                    {/* Mensaje del cliente */}
                     {o.message && (
                       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                        <span className="font-extrabold">💬 Mensaje del cliente:</span> {o.message}
+                        <span className="font-extrabold">Mensaje del cliente:</span> {o.message}
                       </div>
                     )}
-
-                    {/* Descarga rápida si subió foto o dibujo */}
                     {(d.image || d.drawing || partner?.image) && (
                       <div className="flex flex-wrap gap-2">
                         {d.image && (
@@ -672,7 +686,7 @@ export default function OrdersAdmin() {
                             download={`pedido-${o.id}-foto.jpg`}
                             className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold text-stone-700 hover:border-amber-400"
                           >
-                            ⬇ Descargar foto cliente
+                            Descargar foto cliente
                           </a>
                         )}
                         {partner?.image && (
@@ -681,7 +695,7 @@ export default function OrdersAdmin() {
                             download={`pedido-${o.id}-foto-duo2.jpg`}
                             className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold text-stone-700 hover:border-amber-400"
                           >
-                            ⬇ Descargar foto #2
+                            Descargar foto #2
                           </a>
                         )}
                         {d.drawing && (
@@ -690,13 +704,12 @@ export default function OrdersAdmin() {
                             download={`pedido-${o.id}-dibujo.png`}
                             className="rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold text-stone-700 hover:border-amber-400"
                           >
-                            ⬇ Descargar dibujo cliente
+                            Descargar dibujo cliente
                           </a>
                         )}
                       </div>
                     )}
 
-                    {/* Acciones: estado y eliminación en 2 toques */}
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                       <label className="text-xs font-bold text-stone-500">
                         Estado:
@@ -712,7 +725,6 @@ export default function OrdersAdmin() {
                           ))}
                         </select>
                       </label>
-
                       {confirmDeleteId === o.id ? (
                         <div className="ml-auto flex items-center gap-1.5">
                           <span className="text-xs font-bold text-red-600">¿Eliminar?</span>
@@ -737,7 +749,7 @@ export default function OrdersAdmin() {
                           onClick={() => setConfirmDeleteId(o.id)}
                           className="ml-auto rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-500 transition hover:border-red-300 hover:text-red-600"
                         >
-                          🗑 Eliminar
+                          Eliminar
                         </button>
                       )}
                     </div>
@@ -746,6 +758,38 @@ export default function OrdersAdmin() {
               </article>
             );
           })}
+        </div>
+      )}
+
+      {preview3DOrder && modalPrimary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/75 p-3 backdrop-blur-sm">
+          <div className="flex h-[82dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-stone-200 px-5 py-3">
+              <div>
+                <h2 className="text-base font-black text-stone-900">
+                  Vista 3D — Pedido #{preview3DOrder.id} ({preview3DOrder.customerName})
+                </h2>
+                <p className="text-xs text-stone-500">
+                  Arrastra con el dedo o mouse para girar 360° y revisar frente y reverso
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreview3DOrder(null)}
+                className="rounded-full bg-stone-100 px-4 py-1.5 text-xs font-bold text-stone-700 hover:bg-stone-200"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <Keychain3D
+                design={modalPrimary}
+                partnerDesign={modalPartner}
+                duoFocus={duoFocus3D}
+                onDuoFocusChange={setDuoFocus3D}
+              />
+            </div>
+          </div>
         </div>
       )}
     </section>
