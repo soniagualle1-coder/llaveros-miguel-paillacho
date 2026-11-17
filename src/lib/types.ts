@@ -23,13 +23,11 @@ export type SurfacePattern =
   | "costura"
   | "destellos";
 
-/**
- * - "superficie" (y "placa" por compatibilidad): llavero con la forma elegida y superficie para grabar el nombre
- * - "nombre": SOLO el nombre recortado en 3D como llavero (sin placa rectangular de fondo)
- */
 export type KeychainBaseMode = "superficie" | "nombre" | "placa";
 
 export type OrderKind = "individual" | "mascota" | "duo";
+
+export type PaymentMethod = "pichincha" | "deuna" | "debito";
 
 export type KeychainDesign = {
   base: KeychainBaseMode;
@@ -41,25 +39,27 @@ export type KeychainDesign = {
   font: string;
   textColor: string;
   textScale: number;
-  /** En modo "superficie": forma 3D del llavero (null = placa clásica redondeada). */
   shapeId: string | null;
-  /** En modo "superficie" con material "color": color de la superficie. En modo "nombre": color de la base del nombre. */
   shapeColor: string;
-  /** En modo "nombre": si true muestra borde de contorno del color shapeColor; si false todo del mismo color de letra. */
   nameOutline: boolean;
   smallShapes: SmallShape[];
-  /** dataURL de la imagen del cliente */
   image: string;
-  /** dataURL del dibujo del cliente */
   drawing: string;
   size: "S" | "M" | "L";
   chain: boolean;
-  /** Metadatos opcionales para pedidos de Mascotas o Dúo */
   orderKind?: OrderKind;
   petDesignId?: number | null;
   petDesignTitle?: string;
   duoName?: string;
   duoPartner?: Omit<KeychainDesign, "duoPartner"> | null;
+  paymentMethod?: PaymentMethod;
+  paymentReference?: string;
+};
+
+export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  pichincha: "Depósito / Transf. Banco Pichincha",
+  deuna: "Deuna (Banco Pichincha)",
+  debito: "Tarjeta de Débito",
 };
 
 export const DEFAULT_DESIGN: KeychainDesign = {
@@ -85,39 +85,15 @@ export const DEFAULT_DESIGN: KeychainDesign = {
   petDesignTitle: "",
   duoName: "",
   duoPartner: null,
+  paymentMethod: "pichincha",
+  paymentReference: "",
 };
 
-export const DEFAULT_DUO_PARTNER: KeychainDesign = {
-  base: "superficie",
-  surfaceMaterial: "color",
-  engraveStyle: "color",
-  pattern: "corazones",
-  text: "Mi Mitad",
-  backText: "Siempre juntos",
-  font: "Dancing Script",
-  textColor: "#ffffff",
-  textScale: 1,
-  shapeId: "sim-corazon",
-  shapeColor: "#0ea5e9",
-  nameOutline: true,
-  smallShapes: [{ id: "estrella-5", color: "#fde047" }],
-  image: "",
-  drawing: "",
-  size: "M",
-  chain: true,
-  orderKind: "duo",
-  petDesignId: null,
-  petDesignTitle: "",
-  duoName: "",
-  duoPartner: null,
-};
-
-/** Normaliza diseños guardados (incluyendo pedidos antiguos) sin fallar jamás. */
 export function normalizeDesign(raw: Partial<KeychainDesign> | null | undefined): KeychainDesign {
   const src = raw && typeof raw === "object" ? raw : {};
   const rawBase = src.base;
   const base: KeychainBaseMode =
-    rawBase === "nombre" ? "nombre" : rawBase === "placa" ? "superficie" : rawBase === "superficie" ? "superficie" : "superficie";
+    rawBase === "nombre" ? "nombre" : "superficie";
 
   const validMaterials: SurfaceMaterial[] = [
     "madera",
@@ -167,6 +143,11 @@ export function normalizeDesign(raw: Partial<KeychainDesign> | null | undefined)
     duoPartner = rest;
   }
 
+  const validPayments: PaymentMethod[] = ["pichincha", "deuna", "debito"];
+  const paymentMethod: PaymentMethod = validPayments.includes(src.paymentMethod as PaymentMethod)
+    ? (src.paymentMethod as PaymentMethod)
+    : "pichincha";
+
   return {
     base,
     surfaceMaterial,
@@ -198,5 +179,7 @@ export function normalizeDesign(raw: Partial<KeychainDesign> | null | undefined)
     petDesignTitle: typeof src.petDesignTitle === "string" ? src.petDesignTitle.slice(0, 120) : "",
     duoName: typeof src.duoName === "string" ? src.duoName.slice(0, 80) : "",
     duoPartner,
+    paymentMethod,
+    paymentReference: typeof src.paymentReference === "string" ? src.paymentReference.slice(0, 80) : "",
   };
 }
